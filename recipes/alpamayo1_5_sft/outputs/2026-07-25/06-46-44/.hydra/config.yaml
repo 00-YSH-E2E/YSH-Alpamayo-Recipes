@@ -1,0 +1,110 @@
+data:
+  train_dataset:
+    vla_preprocess_args:
+      _target_: alpamayo.processor.qwen_processor.get_preprocess_data_fn_from_model_config
+      chat_template_version: r1_5
+      components_order:
+      - image
+      - traj_history
+      - prompt
+      - cot
+      components_prompt:
+      - cot
+      label_components:
+      - cot
+      include_camera_ids: true
+      include_frame_nums: true
+      generation_mode: false
+    _recursive_: false
+    _target_: alpamayo.data.pai.PAIDatasetAllEvents
+    local_dir: /workspace/Data/nusc_pad
+    chunk_ids: 0-7
+    use_default_keyframe: false
+    reasoning_metadata: reasoning/ood_reasoning_qc.parquet
+  val_dataset:
+    vla_preprocess_args:
+      _target_: alpamayo.processor.qwen_processor.get_preprocess_data_fn_from_model_config
+      chat_template_version: r1_5
+      components_order:
+      - image
+      - traj_history
+      - prompt
+      - cot
+      components_prompt:
+      - cot
+      label_components:
+      - cot
+      include_camera_ids: true
+      include_frame_nums: true
+      generation_mode: true
+    _recursive_: false
+    _target_: alpamayo.data.pai.PAIDatasetAllEvents
+    local_dir: /workspace/Data/nusc_pad
+    chunk_ids: 7-9
+    use_default_keyframe: false
+    reasoning_metadata: reasoning/ood_reasoning_qc.parquet
+  collate_fn:
+    _target_: alpamayo.processor.qwen_processor.collate_fn_from_model_config
+    _partial_: true
+    chat_template_version: r1_5
+paths:
+  output_dir: output_stage1_coc_lora
+callbacks: {}
+evaluate:
+  max_eval_steps: -1
+  torch_dtype: bfloat16
+  metric_runner:
+    _target_: alpamayo.metrics.metric_runner.MetricRunner
+    metrics:
+    - _target_: alpamayo.metrics.metric_api.ReasoningSampler
+      num_traj_sets: 1
+      top_p: 0.98
+      temperature: 0.6
+      traj_only_generation: false
+      max_generation_length: 256
+    - _target_: alpamayo.metrics.metric_api.DistanceMetrics
+  eval_ckpt: null
+trainer:
+  output_dir: ${paths.output_dir}
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 8
+  learning_rate: 0.0002
+  warmup_steps: 50
+  logging_steps: 5
+  save_steps: 250
+  save_total_limit: 2
+  num_train_epochs: 3
+  bf16: true
+  dataloader_pin_memory: true
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  report_to: none
+  lr_scheduler_type: cosine_warmup_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr: 1.0e-06
+  deepspeed: null
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  ddp_find_unused_parameters: false
+task_name: alpamayo_1_5_sft_stage1_coc_lora
+run_name: ${task_name}_${now:%Y%m%d}_${now:%H%M%S}
+model:
+  _target_: alpamayo1_5_sft.models.sft_base_model.TrainableReasoningVLA.from_alpamayo_checkpoint
+  checkpoint_path: /workspace/Data/Alpamayo-1.5-10B-a1-sft
+  vlm_name_or_path: Qwen/Qwen3-VL-8B-Instruct
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: none
+  task_type: CAUSAL_LM
+  target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj

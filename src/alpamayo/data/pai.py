@@ -161,3 +161,83 @@ class PAIDataset(Dataset):
             sample_data["tokenized_data"] = self.vla_preprocess_func(data=sample_data)
 
         return sample_data
+
+
+class PAIDatasetAllEvents(PAIDataset):
+    """Emit one sample per (clip, in-window event) instead of one per clip.
+
+    Vanilla :class:`PAIDataset` trains only the first event of each clip
+    (``get_clip_key_frame`` defaults to ``sample_index_in_clip=0``). This subclass
+    flattens every filtered ``event_t0`` into its own sample so all CoC events are
+    used. Each sample's ``t0`` is ``event_t0s[k]`` and the matching ``cot`` is
+    returned by the exact-match ``get_reasoning_data``. Loading logic mirrors
+    ``PAIDataset.__getitem__`` exactly, changing only the ``t0`` source.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        clip_index = self.avdi.clip_index
+        self._pairs: list[tuple[str, int]] = []
+        for clip_id in self.clip_ids:  # already chunk-filtered
+            n_events = len(clip_index.at[clip_id, "event_t0s"])
+            for k in range(n_events):
+                self._pairs.append((clip_id, k))
+
+    def __len__(self) -> int:
+        return len(self._pairs)
+
+    def __getitem__(self, idx: int) -> dict[str, Any] | None:
+        clip_id, k = self._pairs[idx]
+        t0_us = int(self.avdi.get_clip_key_frame(clip_id, sample_index_in_clip=k))
+
+        sample_data = load_physical_aiavdataset(
+            clip_id,
+            t0_us=t0_us,
+            avdi=self.avdi,
+            num_history_steps=self.num_history_steps,
+            num_future_steps=self.num_future_steps,
+            time_step=self.time_step,
+        )
+
+        # squeeze ego motion shape
+        for key in list(sample_data.keys()):
+            if key.startswith("ego_"):
+                sample_data[key] = sample_data[key].squeeze(0)
+
+        if self.include_extr_intr:
+            sample_data["extr"] = self.avdi.get_clip_feature(clip_id, "sensor_extrinsics")
+            sample_data["intr"] = self.avdi.get_clip_feature(clip_id, "camera_intrinsics")
+            vehicle_dimensions = self.avdi.get_clip_feature(clip_id, "vehicle_dimensions")
+            sample_data["ego_lwh"] = torch.tensor(
+                [vehicle_dimensions.length, vehicle_dimensions.width, vehicle_dimensions.height]
+            )
+            sample_data["ego_length_offset"] = torch.tensor(
+                vehicle_dimensions.rear_axle_to_bbox_center / vehicle_dimensions.length
+            )
+
+        if self.reshape_tensors_for_rl:
+            image_frames = sample_data["image_frames"]
+            camera_indices = sample_data["camera_indices"]
+            absolute_timestamps = sample_data["absolute_timestamps"]
+            relative_timestamps = sample_data["relative_timestamps"]
+
+            n_cam, n_frame = image_frames.shape[0], image_frames.shape[1]
+            image_frames = image_frames.reshape(
+                n_cam * n_frame, *image_frames.shape[2:]
+            ).unsqueeze(1)
+            camera_indices = camera_indices.repeat_interleave(n_frame)
+            absolute_timestamps = absolute_timestamps.reshape(-1)
+            relative_timestamps = relative_timestamps.reshape(-1)
+
+            sample_data["image_frames"] = image_frames
+            sample_data["camera_indices"] = camera_indices
+            sample_data["absolute_timestamps"] = absolute_timestamps
+            sample_data["relative_timestamps"] = relative_timestamps
+
+        if self.avdi.reasoning_db is not None:
+            sample_data.update(self.avdi.get_reasoning_data(clip_id, t0_us))
+
+        if self.vla_preprocess_func is not None:
+            sample_data["tokenized_data"] = self.vla_preprocess_func(data=sample_data)
+
+        return sample_data

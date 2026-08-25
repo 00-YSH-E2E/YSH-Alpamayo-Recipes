@@ -1,0 +1,6 @@
+- model.checkpoint_path=/workspace/Data/Alpamayo-1.5-10B-a1-sft
+- data.train_dataset.chunk_ids="0-1"
+- data.val_dataset.chunk_ids="7-8"
+- +trainer.max_steps=2
+- trainer.save_steps=1000000
+- trainer.logging_steps=1

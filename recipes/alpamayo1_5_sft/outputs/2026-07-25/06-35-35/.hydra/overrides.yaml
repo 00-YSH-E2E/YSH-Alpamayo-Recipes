@@ -1,0 +1,5 @@
+- model.checkpoint_path=/workspace/Data/Alpamayo-1.5-10B-a1-sft
+- trainer.gradient_accumulation_steps=8
+- trainer.save_steps=250
+- trainer.save_total_limit=3
+- trainer.logging_steps=5

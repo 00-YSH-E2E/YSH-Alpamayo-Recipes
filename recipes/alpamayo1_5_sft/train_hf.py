@@ -45,6 +45,16 @@ def train(cfg: DictConfig) -> None:
 
     model = hyu.instantiate(cfg.model, _convert_="partial")
 
+    if cfg.get("lora", None) is not None:
+        from peft import LoraConfig, get_peft_model
+
+        model.vlm = get_peft_model(
+            model.vlm, LoraConfig(**OmegaConf.to_container(cfg.lora, resolve=True))
+        )
+        if hasattr(model.vlm, "enable_input_require_grads"):
+            model.vlm.enable_input_require_grads()  # needed for grad-checkpointing + LoRA
+        model.vlm.print_trainable_parameters()
+
     train_dataset = hyu.instantiate(
         cfg.data.train_dataset, _convert_="partial", model_config=model.config
     )
@@ -87,7 +97,13 @@ def train(cfg: DictConfig) -> None:
             include_hydra_config=True,
         )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=cfg.get("resume_from_checkpoint", None))
+
+    if cfg.get("lora", None) is not None and trainer.is_world_process_zero():
+        adapter_dir = os.path.join(cfg.paths.output_dir, "adapter_final")
+        model.vlm.save_pretrained(adapter_dir)
+        logger.info(f"Saved LoRA adapter to {adapter_dir}")
+
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
 

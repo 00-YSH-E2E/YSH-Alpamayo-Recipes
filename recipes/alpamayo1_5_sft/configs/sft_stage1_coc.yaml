@@ -1,0 +1,49 @@
+defaults:
+  - sft_base
+  - /models/ar1_5_base@model
+  - override /vla_processor@data.train_dataset.vla_preprocess_args: coc
+  - override /vla_processor@data.val_dataset.vla_preprocess_args: coc
+  - _self_
+
+# LoRA on the VLM language layers (vision tower frozen). Consumed by train_hf.py.
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: none
+  task_type: CAUSAL_LM
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+data:
+  train_dataset:
+    _target_: alpamayo.data.pai.PAIDatasetAllEvents
+    local_dir: /workspace/Data/nusc_pad
+    reasoning_metadata: reasoning/ood_reasoning_qc.parquet
+    use_default_keyframe: false          # else t0=5.1s -> ValueError on first sample
+    chunk_ids: "0-7"                      # chunks 0-6 (train)
+    vla_preprocess_args:
+      generation_mode: false
+  val_dataset:
+    _target_: alpamayo.data.pai.PAIDatasetAllEvents
+    local_dir: /workspace/Data/nusc_pad
+    reasoning_metadata: reasoning/ood_reasoning_qc.parquet
+    use_default_keyframe: false
+    chunk_ids: "7-9"                      # chunks 7-8 (val)
+    vla_preprocess_args:
+      generation_mode: true
+
+trainer:
+  deepspeed: null                        # LoRA fits on 97GB, no ZeRO/offload
+  gradient_checkpointing: true
+  ddp_find_unused_parameters: false
+  learning_rate: 2e-4                    # LoRA tolerates higher LR than full-FT; tunable
+  warmup_steps: 50
+  num_train_epochs: 3                    # ~2433 samples; watch val
+
+paths:
+  output_dir: output_stage1_coc_lora
+
+evaluate:
+  eval_ckpt: null
+
+task_name: alpamayo_1_5_sft_stage1_coc_lora
